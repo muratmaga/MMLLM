@@ -121,3 +121,13 @@ print( norm( (trulms - data.matrix(ptpb) ))/norm(trulms) )
 ptimg2 = makePointsImage( ptpb, img*0+1, radius=0.2 ) %>% iMath("GD",2)
 # plot( oimg, ptimg2, nslices = 21, ncolumns = 7, axis=3 )
 antsImageWrite( ptimg2, '/tmp/temp.nii.gz' )
+
+
+
+distancesByPoint = rep( NA, nrow( trulms ) )
+for ( k in 1:nrow( ptpb ) ) {
+  distancesByPoint[k] = sqrt( sum( ( as.numeric(trulms[k,]) - as.numeric(ptpb[k,])  )^2 ) )
+}
+print( distancesByPoint )
+
+print( mean( distancesByPoint ) )
