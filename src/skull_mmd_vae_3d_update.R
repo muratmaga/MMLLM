@@ -245,7 +245,7 @@ if ( file.exists( lossperfn ) ) {
   lossper = read.csv( lossperfn )
   epoch = nrow( lossper ) + 1
   }
-optimizerE <- tf$keras$optimizers$Adam(1e-3)
+optimizerE <- tf$keras$optimizers$Adam(1e-2)
 mmdWeight = tf$cast( 1e-2, mytype)
 ptWeight = tf$cast( 1, mytype )
 rtWeight = tf$cast( 1.0, mytype )
@@ -260,6 +260,10 @@ refpoints = tf$stack( refptlist )
 ##################################
 for (epoch in epoch:num_epochs ) {
   locsd = 0.25 #  epoch / 2000  * 1.5
+  if ( epoch == 400 ) # lower gradient step size when closer to good model
+    optimizerE <- tf$keras$optimizers$Adam(1e-3)
+  if ( epoch == 1000 ) # lower gradient step size when closer to good model
+    optimizerE <- tf$keras$optimizers$Adam(1e-4)
   with(tf$device("/cpu:0"), {
     gg = generateData( batch_size = generator_batch_size,  mySdAff=locsd, verbose=FALSE  )
     datalist = list(
@@ -317,7 +321,7 @@ for (epoch in epoch:num_epochs ) {
   lossper[epoch,'ptrunningmean']=mean(lossper[loepoch:(epoch-1),'pt'])
   if ( lossper[epoch,'ptrunningmean'] < min( lossper[loepoch:(epoch-1),'ptrunningmean'], na.rm=T  ) ) {
     print("best-recent")
-    save_model_weights_hdf5( findpoints, mdlfnr )
+    # save_model_weights_hdf5( findpoints, mdlfnr )
     }
   write.csv( lossper, lossperfn, row.names=FALSE )
   if ( epoch %% 10 == 1 & epoch > 20 ) {

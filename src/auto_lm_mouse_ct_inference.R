@@ -3,6 +3,14 @@ Sys.setenv("TF_NUM_INTRAOP_THREADS"=12)
 Sys.setenv("ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"=12)
 Sys.setenv(CUDA_VISIBLE_DEVICES=2)
 mygpu=Sys.getenv("CUDA_VISIBLE_DEVICES")
+#
+trnhfn = 'models/autopointsupdate_softmax_176_weights_3d_checkpoints5_GPU0_training_history.csv'
+if ( file.exists( trnhfn ) ) {
+  print("TRH")
+  trnh = read.csv( trnhfn )
+  plot( ts(trnh$loss ))
+  points( trnh$testErr, col='red')
+}
 
 library( ANTsRNet )
 library( ANTsR )
