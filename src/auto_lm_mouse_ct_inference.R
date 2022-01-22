@@ -4,15 +4,6 @@ Sys.setenv("ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"=12)
 Sys.setenv(CUDA_VISIBLE_DEVICES=2)
 mygpu=Sys.getenv("CUDA_VISIBLE_DEVICES")
 
-read.fcsv<-function( x, skip=3 ) {
-  df = read.table( x, skip=skip, sep=',' )
-  colnames( df ) = c("id","x","y","z","ow","ox","oy","oz","vis","sel","lock","label","desc","associatedNodeID")
-  return( df )
-  }
-setwd("~/Desktop/MMLLM/")
-
-source("https://raw.githubusercontent.com/muratmaga/SlicerMorph_Rexamples/main/write.markups.fcsv.R")
-
 library( ANTsRNet )
 library( ANTsR )
 library( patchMatchR )
@@ -26,9 +17,9 @@ mytype = "float32"
 
 reoTemplate = antsImageRead( "templateImage.nii.gz" ) # antsImageClone( imgListTest[[templatenum]] )
 ptTemplate = data.matrix( read.csv( "templatePoints.csv" ) )# ptListTest[[templatenum]]
-locdim = dim(reoTemplate)
 
-fnsNew = Sys.glob("data_landmark_new_04_13_2021/*.nii.gz")
+fnsNew = Sys.glob("data/*[0-9].nii.gz")
+fnsNewLM = Sys.glob("data/*[0-9]-LM.nii.gz")
 
 
 # this is inference code
@@ -58,22 +49,20 @@ unet = createUnetModel3D(
        additionalOptions = "nnUnetActivationStyle",
        mode = c("regression")
      )
-unet = keras_model( unet$inputs, tf$nn$sigmoid( unet$outputs[[1]] ) )
-findpoints = deepLandmarkRegressionWithHeatmaps( unet, activation='relu', theta=NA )
+findpoints = deepLandmarkRegressionWithHeatmaps( unet, activation='softmax', theta=NA )
 #load_model_weights_hdf5( findpoints,   "models/autopointsfocused_sigmoid_128_weights_3d_checkpoints5_GPU2.h5" )
-load_model_weights_hdf5( findpoints,   "models/autopointsupdate_sigmoid_128_weights_3d_checkpoints5_GPU2_recent.h5" )
-
+load_model_weights_hdf5( findpoints,   "models/autopointsupdate_softmax_176_weights_3d_checkpoints5_GPU0.h5" )
 myaff = randomAffineImage( reoTemplate, "Rigid", sdAffine = 0 )[[2]]
 idparams = getAntsrTransformParameters( myaff )
 fixparams = getAntsrTransformFixedParameters( myaff )
 templateCoM = getCenterOfMass( reoTemplate )
 
-whichk = sample( 1:length(fnsNew), 1 )
-#whichk = 6
-print( whichk )
+whichk = length( fnsNew ) # left out last subject as test
+print( paste(  fnsNew[whichk], whichk ) )
+locdim = dim( reoTemplate )
 oimg = antsImageRead( fnsNew[whichk] ) %>% resampleImage( locdim, useVoxels=TRUE)
-img = antsImageClone( oimg )
-invisible( antsCopyImageInfo2( img, reoTemplate ) )
+trulms = getCentroids( antsImageRead( fnsNewLM[whichk] ) )[,1:3]
+img = histogramMatchImage( oimg, reoTemplate )
 imgCoM = getCenterOfMass( iMath(img, "Normalize") )
 imgarr = array( as.array( iMath(img, "Normalize") ), dim=c(1,locdim,1) )
 print("deep rigid")
@@ -89,15 +78,20 @@ locparams[10:length(locparams)] = (imgCoM - templateCoM )
 setAntsrTransformParameters( myaff, locparams )
 setAntsrTransformFixedParameters( myaff, templateCoM )
 rotated = applyAntsrTransformToImage( myaff, img, reoTemplate )
+# plot( reoTemplate, rotated, axis=3, nslices=21, ncolumns=7 )
 print("classical rigid")
-qreg = antsRegistration( reoTemplate, img, "Rigid", initialTransform=myaff )
+message("WE ARE STILL RUNNING ORINET BUT NOT USING IT AS ITS TRAINED ON DIFFERENT DATASPACE" )
+qreg = antsRegistration( reoTemplate, img, "Rigid" ) # , initialTransform=myaff )
 print("classical sim")
 qreg = antsRegistration( reoTemplate, img, "Similarity", initialTransform=qreg$fwdtransforms )
 print("classical aff")
 qreg = antsRegistration( reoTemplate, img, "Affine", initialTransform=qreg$fwdtransforms )
 img2LM = qreg$warpedmovout
 print( antsImageMutualInformation( reoTemplate, img2LM) )
-
+doviz=FALSE
+if ( doviz )
+  plot( reoTemplate, img2LM, axis=3, nslices=21, ncolumns=7 )
+#################################################
 img2LMcoords = coordinateImages( img2LM * 0 + 1 )
 mycc = array( dim = c( 1, dim( img2LM ), 3 ) )
 for ( jj in 1:3 ) mycc[1,,,,jj] = as.array( img2LMcoords[[jj]] )
@@ -107,89 +101,15 @@ with(tf$device("/cpu:0"), {
       pointsoutte <- predict( findpoints, telist, batch_size = 1 )
       })
 ptp = as.array(pointsoutte[[2]])[1,,]
-ptimg = makePointsImage( ptp, img2LM*0+1, radius=1 )  %>% iMath("GD",3)
+ptimg = makePointsImage( ptp, img2LM*0+1, radius=0.2 )  %>% iMath("GD",3)
 print(sort(unique(ptimg)))
-# plot( img2LM, ptimg, nslices = 21, ncolumns = 7 )
+if ( doviz)
+  plot( img2LM, ptimg, nslices = 21, ncolumns = 7, axis=3 )
 ptmask = thresholdImage( ptimg, 1, 2 )
 ptmaskdil = iMath( ptmask, "MD", 8 )
-#plot(
-#  cropImage(img2LM,ptmaskdil),
-#  cropImage(ptimg*thresholdImage(ptimg,1,2),ptmaskdil), nslices = 21, ncolumns = 7 )
-# now we transform points to original (rotational) space
 ptpb = antsApplyTransformsToPoints( 3, ptp, qreg$fwdtransforms, whichtoinvert=c(FALSE) )
-ptimg2 = makePointsImage( ptpb, img*0+1, radius=1 ) %>% iMath("GD",4)
-# plot( img, ptimg, nslices = 21, ncolumns = 7, axis=1 )
-# but the original image is in yet another space.
-# there is a purely mathematical conversion that could be applied just based
-# on the header space differences but we dont have that code on hand - this is
-# why we convert to image space then back to point space.   note, however,
-# that - for morphometry - rotations do not matter.  and global scale is just
-# based on the spacing.
-invisible( antsCopyImageInfo2( ptimg2, oimg ) )
-ptsOriginalSpace = getCentroids( ptimg2 )[,1:img@dimension]
-trad = sqrt( sum( antsGetSpacing( oimg )^2 ) )
-ptsi = makePointsImage( ptsOriginalSpace, oimg*0+1, radius = trad ) %>% iMath( "GD", 1 )
-# plot( oimg, ptsi, nslices = 21, ncolumns = 7, axis=1 )
-
-#write.csv( ptsOriginalSpace, 'temp.csv', row.names=F )
-write.markups.fcsv(pts=ptsOriginalSpace,
-                   file = paste0(fnsNew[whichk], '_Inference.fcsv')) 
-
-# NOTE: it may be better to apply this mapping to the coordinate space heat
-# maps output from the unet, backtransform them to the original space, and
-# then estimate the points.
-# the first output from the unet is the heat-map images.
-# pointsoutte[[1]]
-#
-# compare to tru points
-#trupts = read.fcsv( paste0( fnsNew[whichk], ".fcsv" ) )
-trupts = read.fcsv("data_landmark_new_04_13_2021/152_9.fcsv")
-trupts = data.matrix( trupts[,c("x","y","z")] )
-distancesByPoint = rep( NA, nrow( trupts ) )
-for ( k in 1:nrow( trupts ) ) {
-  distancesByPoint[k] = sqrt( sum( ( trupts[k,] - ptsOriginalSpace[k,] )^2 ) )
-}
-print( distancesByPoint )
-
-print( mean( distancesByPoint ) )
-
-worstinds = head( rev(order(distancesByPoint)), 6 )
-print( " bad ones " )
-print( worstinds )
-print( distancesByPoint[ worstinds ] )
-
-layout( matrix(1:2,nrow=2))
-# these are the tru points
-ptsitru = makePointsImage( trupts, oimg*0+1, radius = trad ) %>% iMath( "GD", 1 )
-binmask = maskImage( ptsitru, ptsitru, level = worstinds, binarize= TRUE  )
-binmaskdil = iMath(binmask, "MD", 6 )
-ptsitrumsk = maskImage( ptsitru, ptsitru, level = worstinds, binarize=FALSE )
-plot(
-  cropImage(oimg,binmaskdil),
-  cropImage(ptsitrumsk,binmaskdil), nslices = 28, ncolumns = 14, axis=1 )
-
-#
-# these are the est points
-ptsiest = makePointsImage( ptsOriginalSpace, oimg*0+1, radius = trad ) %>% iMath( "GD", 1 )
-ptsiestmsk = maskImage( ptsiest, ptsiest, level = worstinds, binarize=FALSE )
-plot(
-  cropImage(oimg,binmaskdil),
-  cropImage(ptsiestmsk,binmaskdil), nslices = 28, ncolumns = 14, axis=1 )
-
-
-if ( FALSE ) {
-  gg = generateData( batch_size = 1, mySdAff=0, whichSample=219)
-  with(tf$device("/cpu:0"), {
-        pointsoutte <- predict( findpoints, gg[1:2], batch_size = 1 )
-        })
-  ptp = as.array(pointsoutte[[2]])[1,,]
-  img2LM = as.antsImage( gg[[1]][1,,,,1] ) %>% antsCopyImageInfo2( reoTemplate )
-  ptimg = makePointsImage( ptp, img2LM*0+1, radius=1 )  %>% iMath("GD",3)
-  sort(unique(ptimg))
-  plot( img2LM, ptimg, nslices = 21, ncolumns = 7 )
-}
-
-
-# 51 52 29  1  2 53
-# 51 29 52  1  2 53
-# 51 29 52  1 53  2
+# roughly percent errror
+print( norm( (trulms - data.matrix(ptpb) ))/norm(trulms) )
+ptimg2 = makePointsImage( ptpb, img*0+1, radius=0.2 ) %>% iMath("GD",2)
+# plot( oimg, ptimg2, nslices = 21, ncolumns = 7, axis=3 )
+antsImageWrite( ptimg2, '/tmp/temp.nii.gz' )
