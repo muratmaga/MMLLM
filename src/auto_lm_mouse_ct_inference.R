@@ -4,11 +4,15 @@ Sys.setenv("ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"=12)
 Sys.setenv(CUDA_VISIBLE_DEVICES=2)
 mygpu=Sys.getenv("CUDA_VISIBLE_DEVICES")
 #
-trnhfn = 'models/autopointsupdate_softmax_176_weights_3d_checkpoints5_GPU0_training_history.csv'
+trnhfn = 'models/autopointsupdate_softmax_176_weights_3d_checkpoints5_GPUsigmoid0_training_history.csv'
+trnhfn = 'models/autopointsupdate_softmax_176_weights_3d_checkpoints5_GPUsigmoid2_training_history.csv'
+trnhfn = 'models/rotinv0_training_history.csv'
+mdlfn = gsub( "_training_history.csv", ".h5", trnhfn )
 if ( file.exists( trnhfn ) ) {
   print("TRH")
   trnh = read.csv( trnhfn )
   plot( ts(trnh$loss ))
+#  layout( matrix(1:2,nrow=1))
   points( trnh$testErr, col='red')
 }
 
@@ -57,9 +61,8 @@ unet = createUnetModel3D(
        additionalOptions = "nnUnetActivationStyle",
        mode = c("regression")
      )
-findpoints = deepLandmarkRegressionWithHeatmaps( unet, activation='softmax', theta=NA )
+findpoints = deepLandmarkRegressionWithHeatmaps( unet, activation='sigmoid', theta=NA )
 #load_model_weights_hdf5( findpoints,   "models/autopointsfocused_sigmoid_128_weights_3d_checkpoints5_GPU2.h5" )
-load_model_weights_hdf5( findpoints,   "models/autopointsupdate_softmax_176_weights_3d_checkpoints5_GPU0.h5" )
 myaff = randomAffineImage( reoTemplate, "Rigid", sdAffine = 0 )[[2]]
 idparams = getAntsrTransformParameters( myaff )
 fixparams = getAntsrTransformFixedParameters( myaff )
@@ -105,6 +108,7 @@ mycc = array( dim = c( 1, dim( img2LM ), 3 ) )
 for ( jj in 1:3 ) mycc[1,,,,jj] = as.array( img2LMcoords[[jj]] )
 imgarr[1,,,,1] = as.array( iMath( img2LM, "Normalize" ) )
 telist = list(  tf$cast( imgarr, mytype), tf$cast( mycc, mytype) )
+load_model_weights_hdf5( findpoints,   mdlfn )
 with(tf$device("/cpu:0"), {
       pointsoutte <- predict( findpoints, telist, batch_size = 1 )
       })
@@ -116,8 +120,6 @@ if ( doviz)
 ptmask = thresholdImage( ptimg, 1, 2 )
 ptmaskdil = iMath( ptmask, "MD", 8 )
 ptpb = antsApplyTransformsToPoints( 3, ptp, qreg$fwdtransforms, whichtoinvert=c(FALSE) )
-# roughly percent errror
-print( norm( (trulms - data.matrix(ptpb) ))/norm(trulms) )
 ptimg2 = makePointsImage( ptpb, img*0+1, radius=0.2 ) %>% iMath("GD",2)
 # plot( oimg, ptimg2, nslices = 21, ncolumns = 7, axis=3 )
 antsImageWrite( ptimg2, '/tmp/temp.nii.gz' )
@@ -131,3 +133,6 @@ for ( k in 1:nrow( ptpb ) ) {
 print( distancesByPoint )
 
 print( mean( distancesByPoint ) )
+
+# roughly percent errror
+print( norm( (trulms - data.matrix(ptpb) ))/norm(trulms) )
